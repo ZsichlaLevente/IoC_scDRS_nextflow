@@ -1,0 +1,2 @@
+2025-04-25 13:39:11	1.5s	elegant_wozniak	OK	afff16a9b45c8e8a4f5a3743780ac13a541762f8	b9a04eff-9a5f-4676-aecd-33680007463a	nextflow run hello
+2025-04-25 13:56:23	1.5s	drunk_cray	OK	63b72878a4b75cab19a9ee7c6cb421f5	0afb5119-ffb9-44ac-93e0-36d4d8c3b8ce	nextflow run main.nf
