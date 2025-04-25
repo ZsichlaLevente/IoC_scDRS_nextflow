@@ -1,9 +1,11 @@
 cat << EOF > .gitignore
+data/
 work/
 results/
 .nextflow*
 *.log
 *.html
+.DS_Store
 EOF
 
 git add .gitignore
