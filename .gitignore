@@ -1,0 +1,11 @@
+cat << EOF > .gitignore
+work/
+results/
+.nextflow*
+*.log
+*.html
+EOF
+
+git add .gitignore
+git commit -m "Add .gitignore to exclude work and result dirs"
+git push
