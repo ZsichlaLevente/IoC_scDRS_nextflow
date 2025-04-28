@@ -1,5 +1,6 @@
 cat << EOF > .gitignore
 data/
+data_final/
 work/
 results/
 .nextflow*

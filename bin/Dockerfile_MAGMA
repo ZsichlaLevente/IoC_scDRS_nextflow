@@ -1,0 +1,26 @@
+# Use a minimal base image with wget and unzip
+FROM ubuntu:20.04
+
+# Set environment variables to avoid interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install required packages
+RUN apt-get update && apt-get install -y \
+    wget \
+    unzip \
+    bash \
+    procps && \
+    rm -rf /var/lib/apt/lists/*
+
+# Download and unzip MAGMA
+RUN mkdir -p /opt/magma && \
+    cd /opt/magma && \
+    wget -O magma_v1.10.zip https://vu.data.surfsara.nl/index.php/s/zkKbNeNOZAhFXZB/download && \
+    unzip magma_v1.10.zip && \
+    rm magma_v1.10.zip
+
+# Add MAGMA to PATH
+ENV PATH="/opt/magma:${PATH}"
+
+# Ensure bash is the entrypoint (helps with Nextflow execution)
+ENTRYPOINT ["/bin/bash"]
