@@ -3,8 +3,9 @@ nextflow.enable.dsl=2
 
 //// Define processes ////
 
-process scRNA_nf1_scDRS_preprocess {
-    publishDir "results/${sample_id}", mode: 'copy'
+process scRNA_nf1_preprocess {
+    container = 'marcoschinas/scdrs:1.0.2'
+    publishDir "results/scRNA", mode: 'copy'
 
     input:
     tuple val(sample_id), path(input_h5ad), val(batch_column), val(cell_type_column), path(script_preprocess)
@@ -23,12 +24,12 @@ process scRNA_nf1_scDRS_preprocess {
     """
 }
 
-process GWAS_nf1_scDRS_MAGMA {
+process GWAS_nf1_MAGMA {
     container 'magma:1.10'
     publishDir "results/magma", mode: 'copy'
 
     input:
-    tuple path(tsv_file), val(N), path(ncbi37_file), path(g1000_file_bim), path(g1000_file_bed), path(g1000_file_fam), path(g1000_file_synonims)
+    tuple path(tsv_file), val(N), path(ncbi37_file), path(g1000_file_zip)
 
     output:
     path("*.genes.out"), emit: gene_out
@@ -41,6 +42,9 @@ process GWAS_nf1_scDRS_MAGMA {
 
     # process gene location file
     awk 'BEGIN {OFS="\\t"} {print \$6, \$2, \$3, \$4}' ${ncbi37_file} > NCBI37.3.gene_symbol.loc
+
+    # unzip reference genome file
+    unzip ${g1000_file_zip}
 
     # Annotate SNPs to genes
     magma --annotate \
@@ -60,30 +64,69 @@ process GWAS_nf1_scDRS_MAGMA {
     """
 }
 
-process GWAS_nf2_scDRS_mungeGS {
+process GWAS_nf2_combineMAGMA {
+    container = 'r-base:4.5.0'
+    publishDir "results/magma", mode: 'copy'
+
+    input:
+    path(gene_out_files)
+
+    output:
+    path("GWAS_allPheno_zscores.tsv"), emit: combined_zscores
+
+    script:
+    """
+    # Create a temp directory
+    mkdir temp_zscores
+
+    # Loop over each .genes.out file in the working directory
+    for file in *.genes.out; do
+        base_name=\$(basename \$file .genes.out)
+        phenotype=\$(echo \$base_name | sed 's/^[^_]*_//')
+        [ -z "\$phenotype" ] && phenotype=\$base_name
+
+        awk 'BEGIN {print "GENE\\tZSTAT"} NR>1 {print \$1"\\t"\$8}' \$file > temp_zscores/\${phenotype}.txt
+    done
+
+    # Merge all phenotype zscore files by GENE using full join in R
+    Rscript -e '
+        files <- list.files("temp_zscores", full.names = TRUE)
+        if (length(files) == 0) stop("No files found in temp_zscores")
+
+        # Read and merge files in a loop
+        combined <- NULL
+        for (file in files) {
+            data <- read.table(file, header = TRUE, sep = "\\t", stringsAsFactors = FALSE)
+            phenotype <- sub("\\\\.txt\$", "", basename(file))  # Corrected escape sequences
+            colnames(data)[2] <- phenotype
+            if (is.null(combined)) {
+                combined <- data
+            } else {
+                combined <- merge(combined, data, by = "GENE", all = TRUE)
+            }
+        }
+
+        # Write the result
+        write.table(combined, "GWAS_allPheno_zscores.tsv", sep = "\\t", row.names = FALSE, quote = FALSE)
+    '
+    """
+}
+
+
+process GWAS_nf3_mungeGS {
     publishDir "results/munge_gs", mode: 'copy'
 
     input:
-    path(genes_out_file)
+    path(zscore_file)
 
     output:
     path "*.gs", emit: gs_file
 
     script:
     """
-    # Extract the base name of the genes_out_file
-    base_name=\$(basename ${genes_out_file} .genes.out)
-
-    # Ensure the base_name is passed into the shell script
-    echo "Base name is: \$base_name"
-
-    # Extract GENE and ZSTAT columns (tab-separated) before munge-gs
-    awk 'NR==1 {print \$1"\\t"\$8} NR>1 {print \$1"\\t"\$8}' ${genes_out_file} > \${base_name}.zscore.txt
-
-    # Run munge-gs
     scdrs munge-gs \
-        --out-file \${base_name}.gs \
-        --zscore-file \${base_name}.zscore.txt \
+        --out-file ${zscore_file}.gs \
+        --zscore-file ${zscore_file} \
         --weight zscore \
         --n-max 1000
     """
@@ -95,7 +138,7 @@ process GWAS_nf2_scDRS_mungeGS {
 workflow {
     script_preprocess = file("bin/scRNA_nf1_scDRS_preprocess.py")
 
-    // Define a channel for scRNA inputs
+    // scRNA preprocessing
     Channel
         .fromPath("data/scRNA_samples.tsv")
         .splitCsv(header: true, sep: '\t')
@@ -110,14 +153,11 @@ workflow {
         }
         .set { scRNA_tuples }
 
-    scRNA_nf1_scDRS_preprocess(scRNA_tuples)
+    scRNA_nf1_preprocess(scRNA_tuples)
 
-    // Define a channel for GWAS inputs
+    // GWAS preprocessing
     ncbi37_file = Channel.of(file("data/gene_locations/NCBI37.3.gene.loc"))
-    g1000_file_bim = Channel.of(file("data/reference_genomes/g1000_eur.bim"))
-    g1000_file_bed = Channel.of(file("data/reference_genomes/g1000_eur.bed"))
-    g1000_file_fam = Channel.of(file("data/reference_genomes/g1000_eur.fam"))
-    g1000_file_synonims = Channel.of(file("data/reference_genomes/g1000_eur.synonims"))
+    g1000_file_zip = Channel.of(file("data/reference_genomes/g1000_eur.zip"))
 
     Channel
         .fromPath("data/GWAS_samples.tsv")
@@ -130,12 +170,17 @@ workflow {
         }
         .set { GWAS_tuples }
 
-    GWAS_tuples
+    magma_results = GWAS_tuples
         .combine(ncbi37_file)
-        .combine(g1000_file_bim)
-        .combine(g1000_file_bed)
-        .combine(g1000_file_fam)
-        .combine(g1000_file_synonims)
-        | GWAS_nf1_scDRS_MAGMA
-        | GWAS_nf2_scDRS_mungeGS
+        .combine(g1000_file_zip)
+        | GWAS_nf1_MAGMA
+
+    magma_results
+        .collect()
+        .set { all_gene_out_files }
+
+    GWAS_nf2_combineMAGMA(all_gene_out_files)
+        | GWAS_nf3_mungeGS
+
+    // scDRS
 }
