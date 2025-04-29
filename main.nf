@@ -5,7 +5,7 @@ nextflow.enable.dsl=2
 
 process scRNA_nf1_preprocess {
     container = 'marcoschinas/scdrs:1.0.2'
-    publishDir "results/scRNA", mode: 'copy'
+    //publishDir "results/scRNA", mode: 'copy'
 
     input:
     tuple val(sample_id), path(input_h5ad), val(batch_column), val(cell_type_column), path(script_preprocess)
@@ -26,7 +26,7 @@ process scRNA_nf1_preprocess {
 
 process GWAS_nf1_MAGMA {
     container 'magma:1.10'
-    publishDir "results/magma", mode: 'copy'
+    //publishDir "results/magma", mode: 'copy'
 
     input:
     tuple path(tsv_file), val(N), path(ncbi37_file), path(g1000_file_zip)
@@ -66,7 +66,7 @@ process GWAS_nf1_MAGMA {
 
 process GWAS_nf2_combineMAGMA {
     container = 'r-base:4.5.0'
-    publishDir "results/magma", mode: 'copy'
+    //publishDir "results/magma", mode: 'copy'
 
     input:
     path(gene_out_files)
@@ -112,8 +112,8 @@ process GWAS_nf2_combineMAGMA {
     """
 }
 
-
 process GWAS_nf3_mungeGS {
+    container = 'marcoschinas/scdrs:1.0.2'
     publishDir "results/munge_gs", mode: 'copy'
 
     input:
@@ -132,6 +132,49 @@ process GWAS_nf3_mungeGS {
     """
 }
 
+process scDRS_nf1_computeScores {
+    container = 'marcoschinas/scdrs:1.0.2'
+
+    input:
+    tuple path(scRNA_file), path(covariate_file), path(gs_file)
+
+    output:
+    path("${scRNA_file.simpleName}/*"), emit: scDRS_scores_files
+    path("${scRNA_file.simpleName}"), emit: scDRS_scores_folder
+
+    script:
+    """
+    mkdir ${scRNA_file.simpleName}
+    scdrs compute-score \
+        --h5ad-file ${scRNA_file} \
+        --h5ad-species mouse \
+        --gs-file ${gs_file} \
+        --gs-species human \
+        --cov-file ${covariate_file} \
+        --out-folder ${scRNA_file.simpleName}
+    """
+}
+
+process scDRS_nf2_performDownstream {
+    container = 'marcoschinas/scdrs:1.0.2'
+    publishDir "results/scDRS", mode: 'copy'
+
+    input:
+    tuple path(scDRS_scores_folder), path(scRNA_file), val(sample_id), path(input_h5ad), val(batch_column), val(cell_type_column), path(script_preprocess)
+
+    output:
+    path("${scRNA_file.simpleName}/*"), emit: scDRS_downstream_folder
+
+    script:
+    """
+    scdrs perform-downstream \
+        --h5ad-file ${scRNA_file} \
+        --score-file ${scDRS_scores_folder}/@.full_score.gz \
+        --out-folder ${scRNA_file.simpleName} \
+        --group-analysis ${cell_type_column} \
+        --gene-analysis\
+    """
+}
 
 //// Execute workflow ////
 
@@ -153,7 +196,7 @@ workflow {
         }
         .set { scRNA_tuples }
 
-    scRNA_nf1_preprocess(scRNA_tuples)
+    processed_scRNA = scRNA_nf1_preprocess(scRNA_tuples)
 
     // GWAS preprocessing
     ncbi37_file = Channel.of(file("data/gene_locations/NCBI37.3.gene.loc"))
@@ -179,8 +222,17 @@ workflow {
         .collect()
         .set { all_gene_out_files }
 
-    GWAS_nf2_combineMAGMA(all_gene_out_files)
-        | GWAS_nf3_mungeGS
-
     // scDRS
+    gs_file = GWAS_nf2_combineMAGMA(all_gene_out_files) | GWAS_nf3_mungeGS
+
+    scDRS_score_results = processed_scRNA.processed_h5ad
+        .combine(processed_scRNA.covariate_tsv)
+        .combine(gs_file)
+        | scDRS_nf1_computeScores
+
+    scDRS_score_results.scDRS_scores_folder
+        .combine(processed_scRNA.processed_h5ad)
+        .combine(scRNA_tuples)
+        | scDRS_nf2_performDownstream
+
 }
