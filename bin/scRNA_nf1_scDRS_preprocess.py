@@ -77,7 +77,8 @@ if __name__ == "__main__":
     adata = scdrs.util.load_h5ad(h5ad_file=input_file, flag_filter_data=True, flag_raw_count=True)
     adata_cov = pd.DataFrame(index=adata.obs.index)
     adata_cov["n_genes"] = adata.obs["n_genes"]
-    adata_cov["animal_ID"] = adata.obs[batch_column]
+    if batch_column in adata.obs and adata.obs[batch_column].nunique() > 1:
+        adata_cov["animal_ID"] = adata.obs[batch_column]
 
     adata_processed = scdrs.preprocess(
         data=adata,

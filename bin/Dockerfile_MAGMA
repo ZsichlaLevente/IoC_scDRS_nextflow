@@ -21,6 +21,7 @@ RUN mkdir -p /opt/magma && \
 
 # Add MAGMA to PATH
 ENV PATH="/opt/magma:${PATH}"
+RUN chmod +x /opt/magma/magma
 
 # Ensure bash is the entrypoint (helps with Nextflow execution)
-ENTRYPOINT ["/bin/bash"]
+#ENTRYPOINT ["/bin/bash"]

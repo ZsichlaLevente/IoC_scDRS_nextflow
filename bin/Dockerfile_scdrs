@@ -1,0 +1,12 @@
+# Use an official Python image as the base
+FROM python:3.8-slim
+
+# Install necessary system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python packages and check if installation was successful
+RUN pip install --no-cache-dir numpy pandas scanpy anndata matplotlib scdrs==1.0.2 gprofiler-official h5py argparse && \
+    python -c "import numpy, pandas, scanpy, anndata, matplotlib, scdrs, gprofiler, h5py, argparse" \
+    || { echo 'Package installation failed!'; exit 1; }
