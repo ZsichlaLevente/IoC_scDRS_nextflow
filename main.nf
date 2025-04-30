@@ -4,15 +4,14 @@ nextflow.enable.dsl=2
 //// Define processes ////
 
 process scRNA_nf1_preprocess {
-    container = 'marcoschinas/scdrs:1.0.2'
+    container = 'scdrs-python:1.0.2'
     //publishDir "results/scRNA", mode: 'copy'
 
     input:
-    tuple val(sample_id), path(input_h5ad), val(batch_column), val(cell_type_column), path(script_preprocess)
+    tuple val(sample_id), path(input_h5ad), val(batch_column), val(cell_type_column), val(species), path(script_preprocess)
 
     output:
-    path "*.h5ad", emit: processed_h5ad
-    path "*.tsv",  emit: covariate_tsv
+    tuple val(sample_id), val(batch_column), val(cell_type_column), val(species),  path("*.h5ad") , path("*.tsv")
 
     script:
     """
@@ -21,6 +20,22 @@ process scRNA_nf1_preprocess {
         --batch_column $batch_column \
         --cell_type_column $cell_type_column \
         --output_dir .
+    """
+}
+
+process scRNA_nf2_orthomap {
+    container = 'scdrs-python:1.0.2'
+    publishDir "results/scRNA", mode: 'copy'
+
+    input:
+    tuple val(sample_id), val(batch_column), val(cell_type_column), val(species), path(processed_h5ad) , path(covariate_file), path(script_orthomap)
+
+    output:
+    tuple val(sample_id), val(batch_column), val(cell_type_column), val(species), path(covariate_file), path("*_mapped.h5ad")
+
+    script:
+    """
+    python3 ${script_orthomap} --input_file ${processed_h5ad} --species ${species}
     """
 }
 
@@ -38,6 +53,13 @@ process GWAS_nf1_MAGMA {
     def base_name = tsv_file.simpleName
 
     """
+    # Check if running inside a Docker container
+    if [[ -f /.dockerenv ]]; then
+        echo "Running inside Docker container"
+    else
+        echo "Not running inside Docker container"
+    fi
+
     export base_name=${base_name}
 
     # process gene location file
@@ -113,7 +135,7 @@ process GWAS_nf2_combineMAGMA {
 }
 
 process GWAS_nf3_mungeGS {
-    container = 'marcoschinas/scdrs:1.0.2'
+    container = 'scdrs-python:1.0.2'
     publishDir "results/munge_gs", mode: 'copy'
 
     input:
@@ -133,21 +155,22 @@ process GWAS_nf3_mungeGS {
 }
 
 process scDRS_nf1_computeScores {
-    container = 'marcoschinas/scdrs:1.0.2'
+    container = 'scdrs-python:1.0.2'
 
     input:
-    tuple path(scRNA_file), path(covariate_file), path(gs_file)
+    tuple val(sample_id), val(batch_column), val(cell_type_column), val(h5ad_species), path(covariate_file), path(scRNA_file), path(gs_file)
 
     output:
-    path("${scRNA_file.simpleName}/*"), emit: scDRS_scores_files
     path("${scRNA_file.simpleName}"), emit: scDRS_scores_folder
+    tuple val(sample_id), val(batch_column), val(cell_type_column), val(h5ad_species), path(covariate_file), path(scRNA_file), path(gs_file), path("${scRNA_file.simpleName}"), emit: scDRS_scores_passon
 
     script:
+    def effective_species = h5ad_species == 'mmulatta' ? 'hsapiens' : h5ad_species
     """
     mkdir ${scRNA_file.simpleName}
     scdrs compute-score \
         --h5ad-file ${scRNA_file} \
-        --h5ad-species mouse \
+        --h5ad-species ${effective_species} \
         --gs-file ${gs_file} \
         --gs-species human \
         --cov-file ${covariate_file} \
@@ -156,11 +179,11 @@ process scDRS_nf1_computeScores {
 }
 
 process scDRS_nf2_performDownstream {
-    container = 'marcoschinas/scdrs:1.0.2'
+    container = 'scdrs-python:1.0.2'
     publishDir "results/scDRS", mode: 'copy'
 
     input:
-    tuple path(scDRS_scores_folder), path(scRNA_file), val(sample_id), path(input_h5ad), val(batch_column), val(cell_type_column), path(script_preprocess)
+    tuple val(sample_id), val(batch_column), val(cell_type_column), val(h5ad_species), path(covariate_file), path(scRNA_file), path(gs_file), path(scDRS_scores_folder)
 
     output:
     path("${scRNA_file.simpleName}/*"), emit: scDRS_downstream_folder
@@ -191,12 +214,14 @@ workflow {
                 file(row.input_file),
                 row.batch_column,
                 row.cell_type_column,
+                row.species,
                 script_preprocess
             )
         }
         .set { scRNA_tuples }
-
-    processed_scRNA = scRNA_nf1_preprocess(scRNA_tuples)
+    scRNA_preprocessed_mapped = scRNA_nf1_preprocess(scRNA_tuples)
+        .combine(Channel.of(file("bin/scRNA_nf2_scDRS_orthomap.py")))
+        | scRNA_nf2_orthomap
 
     // GWAS preprocessing
     ncbi37_file = Channel.of(file("data/gene_locations/NCBI37.3.gene.loc"))
@@ -222,17 +247,17 @@ workflow {
         .collect()
         .set { all_gene_out_files }
 
-    // scDRS
+    // scDRS with our prepared GWAS
     gs_file = GWAS_nf2_combineMAGMA(all_gene_out_files) | GWAS_nf3_mungeGS
+    //extra_gs_file = Channel.of(file("data/scDRS_74pheno.gs"))
+    //all_gs_files = gs_file.concat(extra_gs_file)
+    all_gs_files = gs_file
 
-    scDRS_score_results = processed_scRNA.processed_h5ad
-        .combine(processed_scRNA.covariate_tsv)
-        .combine(gs_file)
+    scDRS_scores = scRNA_preprocessed_mapped
+        .combine(all_gs_files)
         | scDRS_nf1_computeScores
 
-    scDRS_score_results.scDRS_scores_folder
-        .combine(processed_scRNA.processed_h5ad)
-        .combine(scRNA_tuples)
+    scDRS_scores.scDRS_scores_passon
         | scDRS_nf2_performDownstream
 
 }

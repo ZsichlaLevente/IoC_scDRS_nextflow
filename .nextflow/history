@@ -156,3 +156,10 @@
 2025-04-29 18:39:49	1m 9s	deadly_liskov	OK	8f02a124c466fea2f36ba192bca3b0f8	f4b18d62-80aa-44eb-b97a-6541583575aa	nextflow run main.nf -resume
 2025-04-29 19:06:12	1m 11s	jolly_kimura	ERR	ef31c74fae80dbd75218d0deca2c46c4	f4b18d62-80aa-44eb-b97a-6541583575aa	nextflow run main.nf -resume
 2025-04-29 19:17:49	23.3s	jolly_watson	OK	5d6e297eafc6cbc257f87ef6981cadc1	f4b18d62-80aa-44eb-b97a-6541583575aa	nextflow run main.nf -resume
+2025-04-29 21:44:12	-	soggy_plateau	-	1663e4b4ddce5e817db9287d85a5fe25	5a0f3e30-083a-4d08-b1d8-843fa5225641	nextflow run main.nf
+2025-04-29 21:47:05	50m 8s	angry_shirley	ERR	1663e4b4ddce5e817db9287d85a5fe25	d6a4819e-73d1-43f1-8a26-f72fa82d3561	nextflow run main.nf
+2025-04-29 22:37:49	1m 32s	spontaneous_mccarthy	OK	1663e4b4ddce5e817db9287d85a5fe25	d6a4819e-73d1-43f1-8a26-f72fa82d3561	nextflow run main.nf -resume
+2025-04-29 22:47:16	-	disturbed_hamilton	-	1663e4b4ddce5e817db9287d85a5fe25	d6a4819e-73d1-43f1-8a26-f72fa82d3561	nextflow run main.nf -resume
+2025-04-29 22:48:27	19.5s	nauseous_turing	ERR	1663e4b4ddce5e817db9287d85a5fe25	a74b5718-a705-4cf1-8757-2983b17d2945	nextflow run main.nf
+2025-04-29 22:49:46	-	hopeful_shockley	-	1663e4b4ddce5e817db9287d85a5fe25	a74b5718-a705-4cf1-8757-2983b17d2945	nextflow run main.nf -resume
+2025-04-29 22:50:07	8m 58s	admiring_kimura	OK	1663e4b4ddce5e817db9287d85a5fe25	98c8eacc-de8b-451c-a3b7-32d5e9939f39	nextflow run main.nf
