@@ -25,7 +25,7 @@ process scRNA_nf1_preprocess {
 
 process scRNA_nf2_orthomap {
     container = 'scdrs-python:1.0.2'
-    publishDir "results/scRNA", mode: 'copy'
+    publishDir "results/processed_scRNA", mode: 'copy'
 
     input:
     tuple val(sample_id), val(batch_column), val(cell_type_column), val(species), path(processed_h5ad) , path(covariate_file), path(script_orthomap)
@@ -136,7 +136,7 @@ process GWAS_nf2_combineMAGMA {
 
 process GWAS_nf3_mungeGS {
     container = 'scdrs-python:1.0.2'
-    publishDir "results/munge_gs", mode: 'copy'
+    publishDir "results/processed_geneset", mode: 'copy'
 
     input:
     path(zscore_file)
@@ -180,13 +180,15 @@ process scDRS_nf1_computeScores {
 
 process scDRS_nf2_performDownstream {
     container = 'scdrs-python:1.0.2'
-    publishDir "results/scDRS", mode: 'copy'
+    //publishDir "results/scDRS_results", mode: 'copy'
 
     input:
     tuple val(sample_id), val(batch_column), val(cell_type_column), val(h5ad_species), path(covariate_file), path(scRNA_file), path(gs_file), path(scDRS_scores_folder)
 
     output:
-    path("${scRNA_file.simpleName}/*"), emit: scDRS_downstream_folder
+    path("${scRNA_file.simpleName}"), emit: scDRS_downstream_folder
+    output:tuple path("${scRNA_file.simpleName}"), val(cell_type_column), path(scRNA_file), emit: scDRS_results_gather
+
 
     script:
     """
@@ -195,9 +197,32 @@ process scDRS_nf2_performDownstream {
         --score-file ${scDRS_scores_folder}/@.full_score.gz \
         --out-folder ${scRNA_file.simpleName} \
         --group-analysis ${cell_type_column} \
-        --gene-analysis\
+        --gene-analysis
     """
 }
+
+
+process scDRS_nf3_gatherResults {
+    container = 'scdrs-python:1.0.2'
+    publishDir "results/scDRS_results_gathered", mode: 'copy'
+
+    input:
+    tuple path(scDRS_results_folder), val(cell_type_column), path(scRNA_file), path(script_gather)
+
+    output:
+    path("${scRNA_file.simpleName}_final.h5ad"), emit: scRNA_annotated_final
+    path("*_gene_final.txt"), emit: geneAnalysis_gathered
+    path("*_group_final.txt"), emit: groupAnalysis_gathered
+
+    script:
+    """
+    python3 ${script_gather} \
+        --input_folder ${scDRS_results_folder} \
+        --scRNA_input ${scRNA_file} \
+        --groupAnalysis_column ${cell_type_column}
+    """
+}
+
 
 //// Execute workflow ////
 
@@ -224,40 +249,48 @@ workflow {
         | scRNA_nf2_orthomap
 
     // GWAS preprocessing
-    ncbi37_file = Channel.of(file("data/gene_locations/NCBI37.3.gene.loc"))
-    g1000_file_zip = Channel.of(file("data/reference_genomes/g1000_eur.zip"))
+    if ( params.GWAS_panel ) {
+        gs_file = Channel.of(file("data/scDRS_74pheno.gs"))
+    }
+    else {
+        ncbi37_file = Channel.of(file("data/gene_locations/NCBI37.3.gene.loc"))
+        g1000_file_zip = Channel.of(file("data/reference_genomes/g1000_eur.zip"))
+        Channel
+            .fromPath("data/GWAS_samples.tsv")
+            .splitCsv(header: true, sep: '\t')
+            .map { row ->
+                tuple(
+                    file(row.input_file),
+                    row.N as Integer
+                )
+            }
+            .set { GWAS_tuples }
 
-    Channel
-        .fromPath("data/GWAS_samples.tsv")
-        .splitCsv(header: true, sep: '\t')
-        .map { row ->
-            tuple(
-                file(row.input_file),
-                row.N as Integer
-            )
-        }
-        .set { GWAS_tuples }
+        magma_results = GWAS_tuples
+            .combine(ncbi37_file)
+            .combine(g1000_file_zip)
+            | GWAS_nf1_MAGMA
 
-    magma_results = GWAS_tuples
-        .combine(ncbi37_file)
-        .combine(g1000_file_zip)
-        | GWAS_nf1_MAGMA
+        magma_results
+            .collect()
+            .set { all_gene_out_files }
 
-    magma_results
-        .collect()
-        .set { all_gene_out_files }
+        // scDRS with our prepared GWAS
+        gs_file = GWAS_nf2_combineMAGMA(all_gene_out_files) | GWAS_nf3_mungeGS
+    }
 
-    // scDRS with our prepared GWAS
-    gs_file = GWAS_nf2_combineMAGMA(all_gene_out_files) | GWAS_nf3_mungeGS
-    //extra_gs_file = Channel.of(file("data/scDRS_74pheno.gs"))
-    //all_gs_files = gs_file.concat(extra_gs_file)
-    all_gs_files = gs_file
-
+    // perform scDRS analysis
     scDRS_scores = scRNA_preprocessed_mapped
-        .combine(all_gs_files)
+        .combine(gs_file)
         | scDRS_nf1_computeScores
 
-    scDRS_scores.scDRS_scores_passon
+    scDRS_downstream = scDRS_scores.scDRS_scores_passon
         | scDRS_nf2_performDownstream
+
+    // gather and export results
+    script_gather = Channel.of(file("bin/scDRS_nf1_scDRS_gather.py"))
+    scDRS_downstream.scDRS_results_gather
+        .combine(script_gather)
+        | scDRS_nf3_gatherResults
 
 }
