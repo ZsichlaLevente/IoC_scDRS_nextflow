@@ -250,7 +250,7 @@ workflow {
 
     // GWAS preprocessing
     if ( params.GWAS_panel ) {
-        gs_file = Channel.of(file("data/scDRS_74pheno.gs"))
+        gs_file = Channel.of(file(params.GWASfile))
     }
     else {
         ncbi37_file = Channel.of(file("data/gene_locations/NCBI37.3.gene.loc"))
